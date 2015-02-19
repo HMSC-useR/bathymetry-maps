@@ -1,0 +1,248 @@
+---
+title: "Skinning Cats with R:<br/> Bathymetric & Coastline Maps"
+author: "Tom Wainwright <br/> NOAA Fisheries, Newport, OR <br/>"
+date: "Presented 13 Jan. 2015, HMSC UseRs meeting"
+output:
+  ioslides_presentation:
+    fig_height: 5
+    fig_width: 8
+    highlight: tango
+  beamer_presentation:
+    highlight: tango
+---
+
+## A Typical Problem
+- We have some field sampling data, with geographic locations.
+- We want to plot them on a map, with bathymetry (or topography), coastlines, and other features
+- As always with R
+    - <div class="red"> There's more than one way to skin a cat. <div/>
+    
+## Topics Covered:
+- A simple example
+    - Bathymetric data - where to get it.
+    - Simple plotting with spatial analysis packages: *raster*, *sp*, *rgdal*
+- Other topics
+    - Coastline data, R packages *rworldmap*, *rworldxtra*
+    - *marmap* package
+    
+## For Example
+Trawl locations off Washington Coast, from a gear comparison study (3 cruises, two gear types). 
+
+```{r}
+hauls <- read.csv("Hauls.csv", header=TRUE, skip=0, as.is=TRUE)
+head(hauls,3)
+```
+
+##
+Need to compute station midpoints, and numeric cruise and gear codes for plotting:
+
+```{r}
+hauls$midLat <- with(hauls, (StartLat + EndLat) / 2)
+hauls$midLong <- with(hauls, (StartLong + EndLong) / 2)
+hauls$cru <- with(hauls, match(Month, c("May","July","June/July")))
+hauls$mmed <- with(hauls, match(Excluder, c("Y","N")))
+head(hauls,3)
+```
+
+## Where to Get Bathymetry
+
+- The most comprehensive source for bathymetry is ...
+
+## Where to Get Bathymetry
+
+ The most comprehensive source for bathymetry is (YOU GUESSED IT!): **NOAA**
+
+> - NOAA National Geographic Data Center at: 
+    - http://www.ngdc.noaa.gov/mgg/bathymetry/relief.html
+
+> - Generally, stick with gridded "DEM" data
+    - point soundings and acoustic track data are available if you want to go raw
+> - First stop: global ETOPO1 data
+    - whole globe on a 1-arc-minute grid
+> - If that's too coarse for you, use the "Interactive Map Interface" to find finer-scale regional grids
+
+## Downloading Bathymetry
+
+- Find the data set you want.
+
+> - Select a region close to what you want.
+
+> - *DON'T DOWNLOAD IT!* Just copy the download URL as a template.
+    - http://maps.ngdc.noaa.gov/viewers/wcs-client/
+
+> - We'll have R do the download, pasting in lats and longs -
+    - that way we have a written record of exactly what data we got
+    - that way we can modify the script for a different area
+    
+> - Netiquette: These can be huge datasets: Don't overload servers/networks by repeating a download every time your script runs!
+
+---
+
+- Now we're ready to download the data:
+
+```{r}
+minLat <- 46.5; maxLat <- 47.2
+minLon <- -124.5; maxLon <- -123.75
+url <- paste("http://maps.ngdc.noaa.gov/mapviewer-support/wcs-proxy/",
+             "wcs.groovy?filename=etopo1_bedrock.tif&",
+             "request=getcoverage&version=1.0.0&service=wcs&",
+             "coverage=etopo1_bedrock&CRS=EPSG:4326&format=geotiff&",
+             "resx=0.016666666666666667&resy=0.016666666666666667&bbox=",
+             minLon, ",", minLat, ",", maxLon, ",", maxLat, sep="")
+fname <- "etopo1_bedrock_GH&WB.tif"
+if ( ! file.exists(fname)) {
+  download.file(url, fname, mode="wb", cacheOK="false")
+  }
+```
+
+## Working with geoTIFF files
+- We downloaded the data as "geoTIFF" file, a specialized format for gridded geographic data.
+- So, load a few libraries, then read the file as "raster" data:
+```{r results='hide'}
+library(sp)      # Spatial analysis and plotting 
+library(rgdal)   # Interface to the GDAL libraries
+library(raster)  # Raster (gridded image) datasets
+bathy <- raster(fname)
+```
+
+---
+
+```{r}
+plot(bathy)   ## !UGGLLYY!
+```
+
+---
+
+```{r}
+plot(bathy, col=topo.colors(32))
+contour(bathy, levels=c(-200, -100, -50, 0), add=TRUE)
+with(hauls, points(midLong, midLat, pch=(21:23)[cru],
+      lwd=2, cex=2, col="black", bg=c("grey50",NA)[mmed]))
+```
+
+## We can do better (maybe)
+- That's still a bit ugly.
+    - The axes don't fit the image
+    - The zero contour doesn't match the coastline
+    - The big 1-arc-second pixels are a bit distracting at this small a scale
+- First change, try to find finer-resolution bathymetry
+- Second change, use the spplot() function in the *sp* package
+- Third change, use a separate coastlines dataset
+
+### Back to the NOAA data catalog
+http://www.ngdc.noaa.gov/mgg/bathymetry/relief.html
+
+## New Dataset: crm data
+- Coastal Relief Mapping project has fine-resolution (0.3 arc-sec) bathymetry for most of the US coastline.
+```{r}
+url.hi <- paste("http://maps.ngdc.noaa.gov/mapviewer-support/wcs-proxy/",
+             "wcs.groovy?filename=crm.tif&",
+             "request=getcoverage&version=1.0.0&service=wcs&",
+             "coverage=crm&CRS=EPSG:4326&format=geotiff&",
+             "resx=0.000833333333333334&resy=0.000833333333333334&bbox=",
+             minLon, ",", minLat, ",", maxLon, ",", maxLat, sep="")
+fname.hi <- "crm_WACoast.tif"
+if ( ! file.exists(fname.hi)) {
+  download.file(url.hi, fname.hi, mode="wb", cacheOK="false")
+  }
+bathy.hi <- raster(fname.hi)
+```
+
+---
+
+```{r}
+plot(bathy.hi, col=topo.colors(32))
+contour(bathy.hi, levels=c(-200, -100, -50, 0), add=TRUE)
+with(hauls, points(midLong, midLat, pch=(21:23)[cru],
+      lwd=2, cex=2, col="black", bg=c("grey50",NA)[mmed]))
+```
+
+## Using spplot()
+- spplot() is the poor-person's GIS system
+- But, everything has to be in a "spatial dataframe" with defined coordinates and mapping projection.
+- Bathymetry already comes with its own projection data in the geoTIFF, so we just copy that to the hauls data frame:
+
+```{r}
+coordinates(hauls) <- c("midLong","midLat")
+proj4string(hauls) <- proj4string(bathy)
+```
+
+---
+
+- Now, we're ready to build a plot (STRANGE SYNTAX WARNING!)
+    - spplot() by itself draws the raster image
+    - layers are added to it as a list of "sp.layout" items
+    - we save the plot in an object (bplt), then "print" it later
+```{r}
+bplt <- spplot(bathy.hi, col.regions=topo.colors(64),
+               colorkey=FALSE, scales=list(draw=TRUE),
+               xlim = c(-124.5, -123.75), ylim=c(46.5, 47.2),
+               sp.layout=list(
+                 # add contours:
+                      list("sp.lines", rasterToContour(bathy.hi, 
+                          levels=c(-1000, -100, -50, 0, 1000))),
+                 # add trawl locations coded by cruise & gear:
+                      list("sp.points", hauls, pch=(21:23)[hauls$cru],
+                           lwd=2, cex=2, col="black",
+                           fill=c(rgb(0.2,0.2,0.2,0.5),NA)[hauls$mmed])
+                 )
+)
+```
+
+---
+
+```{r}
+plot(bplt)
+```
+
+## Drawing nice coastlines
+- There's a package for that!
+    - *rworldmap* for mapping global coastlines, borders, and country-level data 
+- But that's pretty coarse resolution
+- No worries, there's a package for that, too!
+    - *rworldxtra* data(countriesHigh)
+```{r}
+library(rworldxtra)
+data(countriesHigh)
+##print(summary(countriesHigh))  ## NOT RUN
+```
+
+## Final plot
+
+- Publication-style: black & white.
+- Add a filled polygon for the land:
+```{r}
+bplt <- spplot(bathy.hi, col.regions=NA, colorkey=FALSE,
+               scales=list(draw=TRUE),
+               xlim = c(-124.5, -123.75), ylim=c(46.5, 47.2),
+               sp.layout=list(
+                      list("sp.lines", rasterToContour(bathy.hi, 
+                          levels=c(-1000, -100, -50, 1000))),
+                      list("sp.polygons", countriesHigh, lwd=2, fill="grey"),
+                      list("sp.points", hauls, pch=(21:23)[hauls$cru],
+                           lwd=2, cex=2, col="black",
+                           fill=c(rgb(0.2,0.2,0.2,0.5),NA)[hauls$mmed])
+                 )
+)
+```
+
+---
+
+```{r}
+plot(bplt)
+```
+
+## Next Challenges
+- Add distance scale bar
+- Add legend box for point symbols
+- Get coastline to overlay a color raster of bathymetry
+
+## *Marmap* package
+
+- My impressions:
+    - A specialized package for mapping bathymetry at regional/global scales
+    - Can make very pretty maps
+    - Some learning curve for specialized plot() arguments
+    - Not as flexible as spplot(), but easier
+    
+- http://cran.r-project.org/web/packages/marmap/index.html
